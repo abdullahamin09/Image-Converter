@@ -10,9 +10,23 @@ export default function Home() {
   const [format, setFormat] = useState<string>("webp");
   const [quality, setQuality] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState<number>(0);
 
   const onDrop = (acceptedFiles: File[]) => {
-    setFiles(acceptedFiles);
+    setFiles((prev) => {
+      const existingKeys = new Set(prev.map((f) => `${f.name}-${f.size}-${f.lastModified}`));
+      const added: File[] = [];
+      const addedKeys = new Set<string>();
+      for (const f of acceptedFiles) {
+        const k = `${f.name}-${f.size}-${f.lastModified}`;
+        if (!existingKeys.has(k) && !addedKeys.has(k)) {
+          added.push(f);
+          addedKeys.add(k);
+        }
+      }
+      if (added.length === 0) return prev;
+      return [...prev, ...added];
+    });
   };
 
   useEffect(() => {
@@ -38,6 +52,8 @@ export default function Home() {
   const handleConvert = async () => {
     if (!files.length) return;
 
+    setProgress(0);
+
     const formData = new FormData();
     files.forEach((file) => formData.append("files", file));
     formData.append("format", format);
@@ -48,6 +64,12 @@ export default function Home() {
 
     const res = await axios.post("/api/convert", formData, {
       responseType: "blob",
+      onUploadProgress: (progressEvent: any) => {
+        if (progressEvent.total) {
+          const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          setProgress(percent);
+        }
+      },
     });
 
     const blob = new Blob([res.data]);
@@ -56,9 +78,22 @@ export default function Home() {
     const link = document.createElement("a");
     link.href = url;
     link.download = files.length > 1 ? "images.zip" : `image.${format}`;
+    // append to DOM to improve compatibility with drag/drop and programmatic click
+    link.style.display = "none";
+    document.body.appendChild(link);
     link.click();
 
+    // keep the object URL alive briefly so Chrome drag (or external save) can access it
+    // then revoke and remove the temporary link
+    setTimeout(() => {
+      try {
+        URL.revokeObjectURL(url);
+      } catch (e) {}
+      if (link.parentNode) link.parentNode.removeChild(link);
+    }, 10000);
+
     setLoading(false);
+    setProgress(100);
   };
 
   return (
@@ -152,6 +187,17 @@ export default function Home() {
         >
           {loading ? "Processing..." : "Convert & Download"}
         </button>
+        {loading && (
+          <div className="mt-4">
+            <div className="w-full bg-gray-200 rounded-full h-3">
+              <div
+                className="bg-indigo-600 h-3 rounded-full transition-all"
+                style={{ width: `${progress}%` }}
+              ></div>
+            </div>
+            <p className="text-sm text-center mt-1">{progress}%</p>
+          </div>
+        )}
       </div>
     </div>
   );
